@@ -37,8 +37,8 @@ export const createStudentUser = async (studentDetails, password) => {
         {
             id: 's' + Date.now(),
             name: studentDetails.name,
-            parentName: studentDetails.parentName,
-            registrationDate: new Date().toLocaleDateString('en-GB'),
+            parentname: studentDetails.parentName,
+            registrationdate: new Date().toLocaleDateString('en-GB'),
             parent_email: studentDetails.parentEmail,
             parent_phone: studentDetails.parentPhone,
             student_email: studentDetails.studentEmail,
@@ -77,12 +77,32 @@ export const saveSettings = async (settings) => {
 
 export const fetchStudents = async () => {
     const { data } = await supabase.from('students').select(`*, subjects(*)`);
-    return data || [];
+    if (!data) return [];
+    return data.map(s => ({
+        ...s,
+        parentName: s.parentname,
+        registrationDate: s.registrationdate,
+        parentEmail: s.parent_email,
+        parentPhone: s.parent_phone,
+        studentEmail: s.student_email,
+        studentPhone: s.student_phone,
+        classYear: s.class_year
+    }));
 };
 
 export const saveStudents = async (students) => {
     for (const student of students) {
-        const { subjects, ...studentData } = student;
+        const { subjects, parentName, registrationDate, parentEmail, parentPhone, studentEmail, studentPhone, classYear, ...rest } = student;
+        const studentData = {
+            ...rest,
+            parentname: parentName || rest.parentname,
+            registrationdate: registrationDate || rest.registrationdate,
+            parent_email: parentEmail || rest.parent_email,
+            parent_phone: parentPhone || rest.parent_phone,
+            student_email: studentEmail || rest.student_email,
+            student_phone: studentPhone || rest.student_phone,
+            class_year: classYear || rest.class_year
+        };
         await supabase.from('students').upsert(studentData);
     }
 };
