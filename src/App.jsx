@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Icons } from './components/Icons';
 import * as api from './services/api';
+import { supabase } from './supabaseClient';
 
 const App = () => {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [userRole, setUserRole] = useState(null); 
     const [activeTab, setActiveTab] = useState('dashboard');
+    
+    // --- Auth State ---
+    const [authEmail, setAuthEmail] = useState('');
+    const [authPassword, setAuthPassword] = useState('');
+    const [authError, setAuthError] = useState('');
+    const [authMode, setAuthMode] = useState('login');
+    const [isAuthLoading, setIsAuthLoading] = useState(true); // Wait for auth init
     
     // --- State ---
     const [settings, setSettings] = useState({ currency: 'GBP' });
@@ -28,7 +36,7 @@ const App = () => {
     const [boardSelectedSubjectId, setBoardSelectedSubjectId] = useState('all');
     const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
 
-    // --- Data Loading ---
+    // --- Data Loading & Auth ---
     useEffect(() => {
         const loadData = async () => {
             const [sSettings, sStudents, sLessons, sInvoices] = await Promise.all([
@@ -43,7 +51,32 @@ const App = () => {
             setInvoices(sInvoices);
             setIsLoading(false);
         };
-        loadData();
+
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (session) {
+                setIsLoggedIn(true);
+                const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+                setUserRole(profile?.role || 'student');
+                loadData();
+            } else {
+                setIsLoggedIn(false);
+                setUserRole(null);
+                setIsLoading(false);
+            }
+            setIsAuthLoading(false);
+        });
+
+        // Initial check
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (!session) {
+                setIsAuthLoading(false);
+                setIsLoading(false);
+            }
+        });
+
+        return () => {
+            authListener.subscription.unsubscribe();
+        };
     }, []);
 
     // --- Persist Data (Effectively mimicking sync) ---
@@ -84,12 +117,14 @@ const App = () => {
         setActiveSession(null);
     };
 
-    const addSubjectToStudent = (studentId, subjectName, rate) => {
+    const addSubjectToStudent = async (studentId, subjectName, rate, startDate, endDate) => {
+        const newSubject = { id: 'sub' + Date.now(), student_id: studentId, name: subjectName, rate: parseFloat(rate), start_date: startDate, end_date: endDate };
+        await api.saveSubject(newSubject);
         setStudents(students.map(s => {
             if (s.id === studentId) {
                 return {
                     ...s,
-                    subjects: [...s.subjects, { id: 'sub' + Date.now(), name: subjectName, rate: parseFloat(rate) }]
+                    subjects: [...(s.subjects || []), newSubject]
                 };
             }
             return s;
@@ -108,7 +143,8 @@ const App = () => {
         ));
     };
 
-    const confirmSignOut = () => {
+    const confirmSignOut = async () => {
+        await api.signOut();
         setIsLoggedIn(false);
         setUserRole(null);
         setActiveTab('dashboard');
@@ -157,22 +193,55 @@ const App = () => {
     }
 
     // --- Main Screens ---
+    if (isAuthLoading) {
+        return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-bold animate-pulse">Initializing Security...</div>;
+    }
+
     if (!isLoggedIn) {
+        const handleAuth = async (e) => {
+            e.preventDefault();
+            setAuthError('');
+            try {
+                if (authMode === 'login') {
+                    await api.signIn(authEmail, authPassword);
+                } else {
+                    await api.signUpTutor(authEmail, authPassword);
+                    setAuthMode('login');
+                    alert('Tutor account created! Please sign in.');
+                }
+            } catch (err) {
+                setAuthError(err.message);
+            }
+        };
+
         return (
             <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
                 <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
                     <div className="bg-indigo-600 p-10 text-center text-white">
                         <Icons.Book size={56} className="mx-auto mb-4" />
                         <h1 className="text-3xl font-bold tracking-tight text-white">Lesson Pro</h1>
-                        <p className="opacity-75 mt-2 text-indigo-100">Professional Tutor Management</p>
+                        <p className="opacity-75 mt-2 text-indigo-100">Secure Access</p>
                     </div>
-                    <div className="p-8 space-y-4">
-                        <button onClick={() => { setUserRole('tutor'); setIsLoggedIn(true); }} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95">
-                            <Icons.Users size={20} /> Login as Tutor
-                        </button>
-                        <button onClick={() => { setUserRole('student'); setIsLoggedIn(true); }} className="w-full py-4 border-2 border-slate-200 text-slate-700 rounded-2xl font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
-                            <Icons.Users size={20} /> Login as Student
-                        </button>
+                    <div className="p-8">
+                        {authError && <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm font-bold rounded-xl border border-red-100">{authError}</div>}
+                        <form onSubmit={handleAuth} className="space-y-4">
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                                <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
+                                <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                            </div>
+                            <button type="submit" className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg mt-4 active:scale-95">
+                                {authMode === 'login' ? 'Sign In' : 'Create Tutor Account'}
+                            </button>
+                        </form>
+                        <div className="mt-6 text-center">
+                            <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors">
+                                {authMode === 'login' ? 'Need a Tutor account? Sign up' : 'Already have an account? Sign in'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -557,35 +626,73 @@ const App = () => {
 
             {/* MODAL: REGISTER STUDENT */}
             {isModalOpen && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden animate-fade-in">
-                        <div className="p-8 border-b border-slate-100 flex justify-between items-center">
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-fade-in my-8">
+                        <div className="p-8 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white">
                             <h3 className="text-xl font-bold text-slate-800 tracking-tight">Onboard New Student</h3>
                             <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl font-bold p-2 transition-colors">×</button>
                         </div>
-                        <div className="p-8 space-y-6">
-                            <div className="grid grid-cols-2 gap-4">
+                        <form onSubmit={async (e) => {
+                            e.preventDefault();
+                            const details = {
+                                name: e.target.sName.value,
+                                parentName: e.target.pName.value,
+                                parentEmail: e.target.pEmail.value,
+                                parentPhone: e.target.pPhone.value,
+                                studentEmail: e.target.sEmail.value,
+                                studentPhone: e.target.sPhone.value,
+                                address: e.target.address.value,
+                                classYear: e.target.classYear.value
+                            };
+                            const password = Math.random().toString(36).slice(-8) + 'A1!';
+                            try {
+                                const newStudent = await api.createStudentUser(details, password);
+                                setStudents([...students, { ...newStudent, subjects: [] }]);
+                                setIsModalOpen(false);
+                                alert(`Student created successfully!\n\nLogin Email: ${details.studentEmail}\nPassword: ${password}\n\nPlease share these credentials with the student.`);
+                            } catch (err) {
+                                alert('Error creating student: ' + err.message);
+                            }
+                        }} className="p-8 space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Name</label>
-                                    <input id="new-s-name" type="text" placeholder="e.g. James Wilson" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                                    <input name="sName" type="text" required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Email (Login)</label>
+                                    <input name="sEmail" type="email" required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Phone</label>
+                                    <input name="sPhone" type="tel" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Class/Year</label>
+                                    <input name="classYear" type="text" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
                                 </div>
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Name</label>
-                                    <input id="new-p-name" type="text" placeholder="e.g. Robert Wilson" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                                    <input name="pName" type="text" required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Email</label>
+                                    <input name="pEmail" type="email" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Phone</label>
+                                    <input name="pPhone" type="tel" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Physical Address</label>
+                                    <input name="address" type="text" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
                                 </div>
                             </div>
                             <div className="flex gap-4 pt-4">
-                                <button onClick={() => {
-                                    const name = document.getElementById('new-s-name').value;
-                                    const parent = document.getElementById('new-p-name').value;
-                                    if (name && parent) {
-                                        setStudents([...students, { id: 's' + Date.now(), name, parentName: parent, registrationDate: new Date().toLocaleDateString('en-GB'), subjects: [] }]);
-                                        setIsModalOpen(false);
-                                    }
-                                }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-lg transition-all active:scale-95">Complete Registration</button>
-                                <button onClick={() => setIsModalOpen(false)} className="px-8 py-4 border border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
+                                <button type="submit" className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-lg transition-all active:scale-95">Complete Registration</button>
+                                <button type="button" onClick={() => setIsModalOpen(false)} className="px-8 py-4 border border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
                             </div>
-                        </div>
+                        </form>
                     </div>
                 </div>
             )}
@@ -607,13 +714,27 @@ const App = () => {
                                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Hourly Rate ({settings.currency})</label>
                                 <input id="as-sub-rate" type="number" placeholder="45" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
                             </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Start Date</label>
+                                    <input id="as-sub-start" type="date" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">End Date</label>
+                                    <input id="as-sub-end" type="date" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600" />
+                                </div>
+                            </div>
                             <div className="flex gap-4 pt-4">
                                 <button onClick={() => {
                                     const sub = document.getElementById('as-sub-name').value;
                                     const rate = document.getElementById('as-sub-rate').value;
-                                    if (sub && rate) {
-                                        addSubjectToStudent(isSubModalOpen, sub, rate);
+                                    const start = document.getElementById('as-sub-start').value;
+                                    const end = document.getElementById('as-sub-end').value;
+                                    if (sub && rate && start && end) {
+                                        addSubjectToStudent(isSubModalOpen, sub, rate, start, end);
                                         setIsSubModalOpen(null);
+                                    } else {
+                                        alert("Please fill all fields including Start and End Dates.");
                                     }
                                 }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-lg transition-all active:scale-95">Confirm Assignment</button>
                             </div>
