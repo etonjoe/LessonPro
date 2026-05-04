@@ -39,17 +39,23 @@ const App = () => {
     // --- Data Loading & Auth ---
     useEffect(() => {
         const loadData = async () => {
-            const [sSettings, sStudents, sLessons, sInvoices] = await Promise.all([
-                api.fetchSettings(),
-                api.fetchStudents(),
-                api.fetchLessons(),
-                api.fetchInvoices()
-            ]);
-            setSettings(sSettings);
-            setStudents(sStudents);
-            setLessons(sLessons);
-            setInvoices(sInvoices);
-            setIsLoading(false);
+            try {
+                const [sSettings, sStudents, sLessons, sInvoices] = await Promise.all([
+                    api.fetchSettings(),
+                    api.fetchStudents(),
+                    api.fetchLessons(),
+                    api.fetchInvoices()
+                ]);
+                setSettings(sSettings);
+                setStudents(sStudents);
+                setLessons(sLessons);
+                setInvoices(sInvoices);
+            } catch (error) {
+                console.error("Failed to load application data:", error);
+                // Even on error, we must allow the app to render (perhaps with empty data) to avoid infinite loading screens.
+            } finally {
+                setIsLoading(false);
+            }
         };
 
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
