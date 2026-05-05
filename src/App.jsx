@@ -36,23 +36,50 @@ const App = () => {
     const [boardSelectedSubjectId, setBoardSelectedSubjectId] = useState('all');
     const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
 
+    // --- New Feature States ---
+    const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState(false);
+    const [studentToEdit, setStudentToEdit] = useState(null);
+    const [calendarScheduleDate, setCalendarScheduleDate] = useState(null);
+    const [messages, setMessages] = useState([]);
+    const [activeChatContactId, setActiveChatContactId] = useState(null);
+    const [chatInput, setChatInput] = useState('');
+    const chatEndRef = React.useRef(null);
+
     // --- Data Loading & Auth ---
     useEffect(() => {
-        const loadData = async () => {
+        let activeUserId = null;
+        let messageSubscription = null;
+
+        const loadData = async (userId, role, profileStudentId) => {
             try {
-                const [sSettings, sStudents, sLessons, sInvoices] = await Promise.all([
+                const [sSettings, sStudents, sLessons, sInvoices, sMessages] = await Promise.all([
                     api.fetchSettings(),
-                    api.fetchStudents(),
-                    api.fetchLessons(),
-                    api.fetchInvoices()
+                    api.fetchStudents(role === 'student' ? profileStudentId : null),
+                    api.fetchLessons(role === 'student' ? profileStudentId : null),
+                    api.fetchInvoices(role === 'student' ? profileStudentId : null),
+                    api.fetchMessages(userId)
                 ]);
                 setSettings(sSettings);
                 setStudents(sStudents);
                 setLessons(sLessons);
                 setInvoices(sInvoices);
+                setMessages(sMessages || []);
+
+                // Setup realtime listener for messages
+                if (messageSubscription) supabase.removeChannel(messageSubscription);
+                messageSubscription = supabase.channel('messages-changes')
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, async (payload) => {
+                        const newMsgs = await api.fetchMessages(userId);
+                        setMessages(newMsgs || []);
+                    })
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, async (payload) => {
+                        const newMsgs = await api.fetchMessages(userId);
+                        setMessages(newMsgs || []);
+                    })
+                    .subscribe();
+
             } catch (error) {
                 console.error("Failed to load application data:", error);
-                // Even on error, we must allow the app to render (perhaps with empty data) to avoid infinite loading screens.
             } finally {
                 setIsLoading(false);
             }
@@ -60,19 +87,22 @@ const App = () => {
 
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session) {
+                activeUserId = session.user.id;
                 setIsLoggedIn(true);
                 const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                setUserRole(profile?.role || 'student');
-                loadData();
+                const role = profile?.role || 'student';
+                setUserRole(role);
+                loadData(session.user.id, role, profile?.student_id);
             } else {
+                activeUserId = null;
                 setIsLoggedIn(false);
                 setUserRole(null);
                 setIsLoading(false);
+                if (messageSubscription) supabase.removeChannel(messageSubscription);
             }
             setIsAuthLoading(false);
         });
 
-        // Initial check
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) {
                 setIsAuthLoading(false);
@@ -82,8 +112,15 @@ const App = () => {
 
         return () => {
             authListener.subscription.unsubscribe();
+            if (messageSubscription) supabase.removeChannel(messageSubscription);
         };
     }, []);
+
+    useEffect(() => {
+        if (chatEndRef.current) {
+            chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [messages, activeChatContactId]);
 
     // --- Persist Data (Effectively mimicking sync) ---
     useEffect(() => {
@@ -220,34 +257,86 @@ const App = () => {
             }
         };
 
+        const handleResetPassword = async (e) => {
+            e.preventDefault();
+            setAuthError('');
+            try {
+                await api.resetPassword(authEmail);
+                alert('Password reset link sent to ' + authEmail);
+                setIsForgotPasswordModalOpen(false);
+            } catch (err) {
+                setAuthError(err.message);
+            }
+        };
+
         return (
             <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
                 <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
-                    <div className="bg-indigo-600 p-10 text-center text-white">
+                    <div className="bg-indigo-600 pt-10 pb-6 text-center text-white">
                         <Icons.Book size={56} className="mx-auto mb-4" />
                         <h1 className="text-3xl font-bold tracking-tight text-white">Lesson Pro</h1>
-                        <p className="opacity-75 mt-2 text-indigo-100">Secure Access</p>
                     </div>
+                    
+                    {/* Login Tabs */}
+                    <div className="flex bg-indigo-700 text-indigo-200 text-sm font-bold">
+                        <button 
+                            className={`flex-1 py-4 text-center transition-colors ${authMode !== 'student' ? 'bg-white text-indigo-600' : 'hover:bg-indigo-600 hover:text-white'}`}
+                            onClick={() => setAuthMode('login')}
+                        >
+                            Tutor Portal
+                        </button>
+                        <button 
+                            className={`flex-1 py-4 text-center transition-colors ${authMode === 'student' ? 'bg-white text-indigo-600' : 'hover:bg-indigo-600 hover:text-white'}`}
+                            onClick={() => setAuthMode('student')}
+                        >
+                            Student Portal
+                        </button>
+                    </div>
+
                     <div className="p-8">
                         {authError && <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm font-bold rounded-xl border border-red-100">{authError}</div>}
-                        <form onSubmit={handleAuth} className="space-y-4">
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-                                <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
-                                <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
-                            </div>
-                            <button type="submit" className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg mt-4 active:scale-95">
-                                {authMode === 'login' ? 'Sign In' : 'Create Tutor Account'}
-                            </button>
-                        </form>
-                        <div className="mt-6 text-center">
-                            <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors">
-                                {authMode === 'login' ? 'Need a Tutor account? Sign up' : 'Already have an account? Sign in'}
-                            </button>
-                        </div>
+                        
+                        {!isForgotPasswordModalOpen ? (
+                            <>
+                                <form onSubmit={handleAuth} className="space-y-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                                        <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
+                                        <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                                    </div>
+                                    <div className="text-right">
+                                        <button type="button" onClick={() => setIsForgotPasswordModalOpen(true)} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors">Forgot Password?</button>
+                                    </div>
+                                    <button type="submit" className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg mt-4 active:scale-95">
+                                        {authMode === 'signup' ? 'Create Tutor Account' : 'Sign In'}
+                                    </button>
+                                </form>
+                                {authMode !== 'student' && (
+                                    <div className="mt-6 text-center">
+                                        <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors">
+                                            {authMode === 'login' ? 'Need a Tutor account? Sign up' : 'Already have an account? Sign in'}
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <form onSubmit={handleResetPassword} className="space-y-4">
+                                <h3 className="font-bold text-slate-800 text-lg mb-2">Reset Password</h3>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Enter your Email</label>
+                                    <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" />
+                                </div>
+                                <button type="submit" className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg active:scale-95">
+                                    Send Reset Link
+                                </button>
+                                <div className="text-center mt-4">
+                                    <button type="button" onClick={() => setIsForgotPasswordModalOpen(false)} className="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors">Back to Login</button>
+                                </div>
+                            </form>
+                        )}
                     </div>
                 </div>
             </div>
@@ -272,13 +361,14 @@ const App = () => {
                             <Icons.Users size={20}/> My Students
                         </button>
                     )}
-                    {userRole === 'student' && (
-                        <button onClick={() => setActiveTab('billing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'billing' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                            <Icons.CreditCard size={20}/> Invoices
-                        </button>
-                    )}
+                    <button onClick={() => setActiveTab('billing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'billing' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
+                        <Icons.CreditCard size={20}/> Invoices
+                    </button>
                     <button onClick={() => setActiveTab('calendar')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
                         <Icons.Calendar size={20}/> Calendar
+                    </button>
+                    <button onClick={() => setActiveTab('messages')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'messages' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
+                        <Icons.MessageSquare size={20}/> Messages
                     </button>
                     <button onClick={() => setActiveTab('ai')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
                         <Icons.Bot size={20}/> AI Support
@@ -429,23 +519,57 @@ const App = () => {
                             </div>
                             <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto custom-scrollbar">
                                 {filteredLessons.length > 0 ? filteredLessons.map(l => (
-                                    <div key={l.id} className="p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-slate-50 transition-colors">
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-3 mb-1">
-                                                <span className="text-sm font-bold text-slate-800">{l.topic}</span>
-                                                <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase">{l.date}</span>
-                                                <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold uppercase">{students[0]?.subjects?.find(s => s.id === l.subjectId)?.name}</span>
+                                    <div key={l.id} className="p-6 flex flex-col justify-between items-start gap-4 hover:bg-slate-50 transition-colors">
+                                        <div className="flex-1 w-full flex flex-col md:flex-row justify-between">
+                                            <div>
+                                                <div className="flex items-center gap-3 mb-1">
+                                                    <span className="text-sm font-bold text-slate-800">{l.topic}</span>
+                                                    <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase">{l.date}</span>
+                                                    <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold uppercase">{students[0]?.subjects?.find(s => s.id === l.subjectId)?.name}</span>
+                                                </div>
+                                                <p className="text-sm text-slate-500 leading-relaxed mb-2">Homework: <span className="italic">"{l.homework}"</span></p>
                                             </div>
-                                            <p className="text-sm text-slate-500 leading-relaxed">Homework: <span className="italic">"{l.homework}"</span></p>
+                                            <div className="flex items-center gap-4 mt-2 md:mt-0">
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase">{l.duration}</span>
+                                                <button 
+                                                    onClick={() => toggleHomework(l.id)}
+                                                    className={`px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${l.status === 'Completed' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                                                >
+                                                    {l.status === 'Completed' ? 'Completed ✓' : 'Mark Done'}
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase">{l.duration}</span>
-                                            <button 
-                                                onClick={() => toggleHomework(l.id)}
-                                                className={`px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${l.status === 'Completed' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-                                            >
-                                                {l.status === 'Completed' ? 'Completed ✓' : 'Mark Done'}
-                                            </button>
+                                        {/* Feedback and File Uploads */}
+                                        <div className="w-full bg-slate-100/50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                                            <div className="flex flex-col gap-2">
+                                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Feedback / Update</label>
+                                                <input type="text" placeholder="Enter your feedback or progress..." defaultValue={l.student_feedback || ''} onBlur={(e) => api.updateLessonStudentWork(l.id, { student_feedback: e.target.value })} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500" />
+                                            </div>
+                                            <div className="flex flex-col md:flex-row gap-4">
+                                                <div className="flex-1 flex flex-col gap-2">
+                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Submit Link</label>
+                                                    <input type="url" placeholder="Google Docs/Drive Link" defaultValue={l.student_work_url || ''} onBlur={(e) => api.updateLessonStudentWork(l.id, { student_work_url: e.target.value })} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500" />
+                                                </div>
+                                                <div className="flex-1 flex flex-col gap-2">
+                                                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Upload File</label>
+                                                    <div className="flex gap-2 items-center">
+                                                        <input type="file" onChange={async (e) => {
+                                                            const file = e.target.files[0];
+                                                            if (file) {
+                                                                try {
+                                                                    const path = await api.uploadHomework(file, l.id);
+                                                                    await api.updateLessonStudentWork(l.id, { student_work_file_path: path });
+                                                                    alert('File uploaded successfully!');
+                                                                    setLessons(lessons.map(les => les.id === l.id ? { ...les, student_work_file_path: path } : les));
+                                                                } catch (err) {
+                                                                    alert('Error uploading: ' + err.message);
+                                                                }
+                                                            }
+                                                        }} className="text-xs w-full text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                                                        {l.student_work_file_path && <a href={l.student_work_file_path.startsWith('http') ? l.student_work_file_path : `https://vczwdfyqfylgxzowxytl.supabase.co/storage/v1/object/public/homework/${l.student_work_file_path}`} target="_blank" rel="noreferrer" className="text-xs font-bold text-indigo-600 hover:underline shrink-0">View</a>}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )) : (
@@ -477,6 +601,8 @@ const App = () => {
                                             </div>
                                         </div>
                                         <div className="flex gap-2">
+                                            <button onClick={() => setStudentToEdit(s)} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 transition-colors" title="Edit Student"><Icons.Edit size={18}/></button>
+                                            <button onClick={async () => { if(window.confirm('Delete student and all their data?')) { await api.deleteStudent(s.id); setStudents(students.filter(st => st.id !== s.id)); } }} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Delete Student"><Icons.Trash size={18}/></button>
                                             <button onClick={() => setIsSubModalOpen(s.id)} className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors" title="Add Subject"><Icons.Plus size={18}/></button>
                                             <button onClick={() => { setIsBoardModalOpen({studentId: s.id}); setBoardSelectedSubjectId('all'); }} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 transition-colors" title="Manage Boards"><Icons.CheckCircle size={18}/></button>
                                         </div>
@@ -528,8 +654,8 @@ const App = () => {
                     </div>
                 )}
 
-                {/* BILLING (STUDENT ONLY) */}
-                {userRole === 'student' && activeTab === 'billing' && (
+                {/* BILLING (TUTOR & STUDENT) */}
+                {activeTab === 'billing' && (
                     <div className="space-y-8 animate-fade-in">
                         <h2 className="text-2xl font-bold text-slate-800">Invoices</h2>
                         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden shadow-lg">
@@ -540,21 +666,42 @@ const App = () => {
                                         <th className="px-8 py-4">Date</th>
                                         <th className="px-8 py-4">Total</th>
                                         <th className="px-8 py-4">Status</th>
+                                        {userRole === 'tutor' && <th className="px-8 py-4">Action</th>}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {invoices.map(inv => (
+                                    {(userRole === 'tutor' ? invoices : invoices.filter(i => i.status === 'Approved' || i.status === 'Paid')).map(inv => (
                                         <tr key={inv.id} className="hover:bg-slate-50 transition-colors">
                                             <td className="px-8 py-4 text-sm font-bold text-slate-800">{inv.id.toUpperCase()}</td>
                                             <td className="px-8 py-4 text-sm text-slate-500">{inv.date}</td>
                                             <td className="px-8 py-4 text-sm font-bold text-slate-900">{formatCurrency(inv.amount)}</td>
                                             <td className="px-8 py-4">
-                                                <span className={`px-4 py-1 rounded-full text-[10px] font-bold border ${inv.status === 'Paid' ? 'bg-green-50 text-green-700 border-green-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
+                                                <span className={`px-4 py-1 rounded-full text-[10px] font-bold border ${inv.status === 'Paid' ? 'bg-green-50 text-green-700 border-green-100' : inv.status === 'Approved' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
                                                     {inv.status.toUpperCase()}
                                                 </span>
                                             </td>
+                                            {userRole === 'tutor' && (
+                                                <td className="px-8 py-4">
+                                                    {inv.status !== 'Approved' && inv.status !== 'Paid' && (
+                                                        <button 
+                                                            onClick={async () => {
+                                                                await api.approveInvoice(inv.id);
+                                                                setInvoices(invoices.map(i => i.id === inv.id ? { ...i, status: 'Approved' } : i));
+                                                            }}
+                                                            className="px-4 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            )}
                                         </tr>
                                     ))}
+                                    {invoices.length === 0 && (
+                                        <tr>
+                                            <td colSpan={userRole === 'tutor' ? 5 : 4} className="p-8 text-center text-slate-400 italic">No invoices found.</td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
@@ -581,13 +728,29 @@ const App = () => {
                             {Array.from({ length: calendarDays.totalDays }).map((_, i) => {
                                 const day = i + 1;
                                 return (
-                                    <div key={day} className="bg-white h-32 p-3 group relative hover:bg-indigo-50/30 transition-colors">
-                                        <span className="text-sm font-bold text-slate-400 group-hover:text-indigo-600 transition-colors">{day}</span>
-                                        {(day % 7 === 1 || day % 7 === 4) && (
-                                            <div className="mt-2 bg-indigo-600 text-[9px] text-white p-2 rounded-lg font-bold shadow-sm truncate">
-                                                {userRole === 'tutor' ? 'Programme: Maths' : 'Lesson: Maths'}
-                                            </div>
-                                        )}
+                                    <div key={day} 
+                                         onClick={() => {
+                                             if (userRole === 'tutor') {
+                                                 const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                                 setCalendarScheduleDate(dateStr);
+                                             }
+                                         }}
+                                         className={`bg-white h-32 p-2 group relative transition-colors overflow-y-auto custom-scrollbar ${userRole === 'tutor' ? 'cursor-pointer hover:bg-indigo-50' : ''}`}>
+                                        <span className="text-sm font-bold text-slate-400 group-hover:text-indigo-600 transition-colors block mb-1">{day}</span>
+                                        
+                                        {lessons.filter(l => {
+                                            if (!l.scheduled_date) return false;
+                                            const lDate = new Date(l.scheduled_date);
+                                            return lDate.getDate() === day && lDate.getMonth() === currentDate.getMonth() && lDate.getFullYear() === currentDate.getFullYear();
+                                        }).map((l, idx) => {
+                                            const subName = students.find(s => s.id === l.studentId)?.subjects?.find(sub => sub.id === l.subjectId)?.name || 'Subject';
+                                            const stName = students.find(s => s.id === l.studentId)?.name || 'Student';
+                                            return (
+                                                <div key={idx} className="mt-1 bg-indigo-600 text-[9px] text-white p-1 rounded font-bold shadow-sm truncate">
+                                                    {userRole === 'tutor' ? `${stName} - ${subName}` : `${subName}`}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 );
                             })}
@@ -624,6 +787,85 @@ const App = () => {
                                     {aiResponse}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                )}
+
+                {/* MESSAGES */}
+                {activeTab === 'messages' && (
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[700px] max-h-screen animate-fade-in">
+                        <div className="flex h-full">
+                            {/* Contact List */}
+                            <div className="w-1/3 border-r border-slate-100 bg-slate-50 overflow-y-auto custom-scrollbar">
+                                <div className="p-6 border-b border-slate-200 sticky top-0 bg-slate-50">
+                                    <h3 className="font-bold text-slate-800">Conversations</h3>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {(userRole === 'tutor' ? students : [{id: 'tutor', name: 'Tutor'}]).map(contact => (
+                                        <div key={contact.id} 
+                                             onClick={() => setActiveChatContactId(contact.id)}
+                                             className={`p-4 cursor-pointer hover:bg-slate-100 transition-colors flex items-center gap-3 ${activeChatContactId === contact.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''}`}>
+                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">{contact.name[0]}</div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-bold text-slate-800 truncate">{contact.name}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            {/* Chat Area */}
+                            <div className="flex-1 flex flex-col bg-white relative">
+                                {activeChatContactId ? (
+                                    <>
+                                        <div className="p-6 border-b border-slate-100 flex items-center gap-4 bg-white/80 backdrop-blur-md z-10 sticky top-0">
+                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">
+                                                {(userRole === 'tutor' ? students.find(s=>s.id === activeChatContactId)?.name : 'Tutor')?.[0]}
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-slate-800">{userRole === 'tutor' ? students.find(s=>s.id === activeChatContactId)?.name : 'Tutor'}</h3>
+                                                <p className="text-xs text-slate-400">Online</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-4 flex flex-col-reverse">
+                                            {messages
+                                                .filter(m => (m.sender_id === activeChatContactId || m.receiver_id === activeChatContactId))
+                                                .sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+                                                .map(msg => {
+                                                    const isMine = msg.sender_id !== activeChatContactId;
+                                                    return (
+                                                        <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                                                            <div className={`max-w-[70%] rounded-2xl p-4 ${isMine ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-100 text-slate-800 rounded-bl-none'}`}>
+                                                                <p className="text-sm">{msg.content}</p>
+                                                                <p className={`text-[9px] mt-1 ${isMine ? 'text-indigo-200' : 'text-slate-400'}`}>{new Date(msg.created_at).toLocaleTimeString()}</p>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                            })}
+                                            <div ref={chatEndRef} />
+                                        </div>
+                                        <div className="p-4 bg-white border-t border-slate-100">
+                                            <form onSubmit={async (e) => {
+                                                e.preventDefault();
+                                                if (!chatInput.trim()) return;
+                                                const content = chatInput;
+                                                setChatInput('');
+                                                await api.sendMessage(userRole === 'tutor' ? activeChatContactId : null, content);
+                                            }} className="flex gap-2">
+                                                <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Type your message..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 transition-colors text-sm" />
+                                                <button type="submit" disabled={!chatInput.trim()} className="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50"><Icons.Send size={18}/></button>
+                                            </form>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center">
+                                        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-300">
+                                            <Icons.MessageSquare size={32} />
+                                        </div>
+                                        <p className="font-bold text-slate-500">Select a conversation</p>
+                                        <p className="text-sm mt-2">Choose a contact from the sidebar to start messaging.</p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}
@@ -842,6 +1084,129 @@ const App = () => {
                             >
                                 Cancel
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* MODAL: EDIT STUDENT */}
+            {studentToEdit && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-fade-in my-8">
+                        <div className="p-8 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white">
+                            <h3 className="text-xl font-bold text-slate-800 tracking-tight">Edit Student</h3>
+                            <button onClick={() => setStudentToEdit(null)} className="text-slate-400 hover:text-slate-600 text-2xl font-bold p-2 transition-colors">×</button>
+                        </div>
+                        <form onSubmit={async (e) => {
+                            e.preventDefault();
+                            const details = {
+                                name: e.target.sName.value,
+                                parentName: e.target.pName.value,
+                                parentEmail: e.target.pEmail.value,
+                                parentPhone: e.target.pPhone.value,
+                                studentEmail: e.target.sEmail.value,
+                                studentPhone: e.target.sPhone.value,
+                                address: e.target.address.value,
+                                classYear: e.target.classYear.value
+                            };
+                            try {
+                                await api.updateStudent(studentToEdit.id, details);
+                                setStudents(students.map(s => s.id === studentToEdit.id ? { ...s, ...details, parentname: details.parentName, student_email: details.studentEmail, student_phone: details.studentPhone, parent_email: details.parentEmail, parent_phone: details.parentPhone, class_year: details.classYear } : s));
+                                setStudentToEdit(null);
+                                alert(`Student updated successfully!`);
+                            } catch (err) {
+                                alert('Error updating student: ' + err.message);
+                            }
+                        }} className="p-8 space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Name</label>
+                                    <input name="sName" type="text" defaultValue={studentToEdit.name} required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Email</label>
+                                    <input name="sEmail" type="email" defaultValue={studentToEdit.studentEmail || studentToEdit.student_email} required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Student Phone</label>
+                                    <input name="sPhone" type="tel" defaultValue={studentToEdit.studentPhone || studentToEdit.student_phone} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Class/Year</label>
+                                    <input name="classYear" type="text" defaultValue={studentToEdit.classYear || studentToEdit.class_year} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Name</label>
+                                    <input name="pName" type="text" defaultValue={studentToEdit.parentName || studentToEdit.parentname} required className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Email</label>
+                                    <input name="pEmail" type="email" defaultValue={studentToEdit.parentEmail || studentToEdit.parent_email} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Parent Phone</label>
+                                    <input name="pPhone" type="tel" defaultValue={studentToEdit.parentPhone || studentToEdit.parent_phone} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Physical Address</label>
+                                    <input name="address" type="text" defaultValue={studentToEdit.address} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                </div>
+                            </div>
+                            <div className="flex gap-4 pt-4">
+                                <button type="submit" className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-lg transition-all active:scale-95">Save Changes</button>
+                                <button type="button" onClick={() => setStudentToEdit(null)} className="px-8 py-4 border border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL: CALENDAR SCHEDULE */}
+            {calendarScheduleDate && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-fade-in">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                            <h3 className="text-xl font-bold text-slate-800 tracking-tight">Schedule Lesson</h3>
+                            <button onClick={() => setCalendarScheduleDate(null)} className="text-slate-400 hover:text-slate-600 text-2xl font-bold p-2 transition-colors">×</button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <p className="text-sm font-bold text-slate-500 mb-4">Date: {calendarScheduleDate}</p>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Select Student & Subject</label>
+                                <select id="cal-schedule-sel" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                                    {students.map(s => s.subjects.map(sub => (
+                                        <option key={`${s.id}-${sub.id}`} value={`${s.id}|${sub.id}`}>{s.name} - {sub.name}</option>
+                                    )))}
+                                </select>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Duration (e.g. 1h 30m)</label>
+                                <input id="cal-schedule-dur" type="text" defaultValue="1h" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                            </div>
+                            <button onClick={async () => {
+                                const val = document.getElementById('cal-schedule-sel').value;
+                                const dur = document.getElementById('cal-schedule-dur').value;
+                                if (!val) return;
+                                const [stId, subId] = val.split('|');
+                                try {
+                                    const newLesson = {
+                                        id: 'l' + Date.now(),
+                                        date: calendarScheduleDate, // Assuming date is text
+                                        scheduled_date: calendarScheduleDate,
+                                        studentId: stId,
+                                        subjectId: subId,
+                                        duration: dur,
+                                        topic: 'Scheduled Session',
+                                        homework: '',
+                                        status: 'Scheduled'
+                                    };
+                                    const savedLesson = await api.scheduleLesson(newLesson);
+                                    setLessons([...lessons, savedLesson]);
+                                    setCalendarScheduleDate(null);
+                                    alert('Lesson Scheduled!');
+                                } catch (e) {
+                                    alert('Error scheduling: ' + e.message);
+                                }
+                            }} className="w-full py-4 mt-2 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 shadow-lg transition-all active:scale-95">Schedule Lesson</button>
                         </div>
                     </div>
                 </div>
