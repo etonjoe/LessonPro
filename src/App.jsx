@@ -52,17 +52,26 @@ const App = () => {
 
         const loadData = async (userId, role, profileStudentId) => {
             try {
+                const studentIdToFetch = role === 'student' ? profileStudentId : null;
                 const [sSettings, sStudents, sLessons, sInvoices, sMessages] = await Promise.all([
                     api.fetchSettings(),
-                    api.fetchStudents(role === 'student' ? profileStudentId : null),
-                    api.fetchLessons(role === 'student' ? profileStudentId : null),
-                    api.fetchInvoices(role === 'student' ? profileStudentId : null),
+                    api.fetchStudents(studentIdToFetch),
+                    api.fetchLessons(studentIdToFetch),
+                    api.fetchInvoices(studentIdToFetch),
                     api.fetchMessages(userId)
                 ]);
+                
+                // If student role but no student record linked, keep arrays empty
+                if (role === 'student' && !profileStudentId) {
+                    setStudents([]);
+                    setLessons([]);
+                    setInvoices([]);
+                } else {
+                    setStudents(sStudents);
+                    setLessons(sLessons);
+                    setInvoices(sInvoices);
+                }
                 setSettings(sSettings);
-                setStudents(sStudents);
-                setLessons(sLessons);
-                setInvoices(sInvoices);
                 setMessages(sMessages || []);
 
                 // Setup realtime listener for messages
@@ -89,10 +98,16 @@ const App = () => {
             if (session) {
                 activeUserId = session.user.id;
                 setIsLoggedIn(true);
-                const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                const role = profile?.role || 'student';
-                setUserRole(role);
-                loadData(session.user.id, role, profile?.student_id);
+                try {
+                    const { data: profile, error: profileErr } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+                    if (profileErr && profileErr.code !== 'PGRST116') throw profileErr;
+                    const role = profile?.role || 'student';
+                    setUserRole(role);
+                    await loadData(session.user.id, role, profile?.student_id);
+                } catch (err) {
+                    console.error("Error fetching profile:", err);
+                    setIsLoading(false);
+                }
             } else {
                 activeUserId = null;
                 setIsLoggedIn(false);
@@ -103,6 +118,12 @@ const App = () => {
             setIsAuthLoading(false);
         });
 
+        // Safety fallback: if nothing happens in 10s, stop loading
+        const safetyTimeout = setTimeout(() => {
+            setIsLoading(false);
+            setIsAuthLoading(false);
+        }, 10000);
+
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) {
                 setIsAuthLoading(false);
@@ -111,7 +132,8 @@ const App = () => {
         });
 
         return () => {
-            authListener.subscription.unsubscribe();
+            clearTimeout(safetyTimeout);
+            if (authListener?.subscription) authListener.subscription.unsubscribe();
             if (messageSubscription) supabase.removeChannel(messageSubscription);
         };
     }, []);
@@ -122,15 +144,7 @@ const App = () => {
         }
     }, [messages, activeChatContactId]);
 
-    // --- Persist Data (Effectively mimicking sync) ---
-    useEffect(() => {
-        if (!isLoading) {
-            api.saveStudents(students);
-            api.saveLessons(lessons);
-            api.saveInvoices(invoices);
-            api.saveSettings(settings);
-        }
-    }, [students, lessons, invoices, settings, isLoading]);
+    // Persistence is handled explicitly in handlers now to avoid sync loops
 
     // --- Handlers ---
     const handleClockIn = (studentId, subjectId) => {
@@ -143,7 +157,7 @@ const App = () => {
         });
     };
 
-    const handleClockOut = () => {
+    const handleClockOut = async () => {
         if (!activeSession) return;
         const mins = Math.floor((new Date() - activeSession.startTime) / 60000);
         const newLesson = {
@@ -156,8 +170,13 @@ const App = () => {
             status: 'Pending',
             duration: `${mins} mins`
         };
-        setLessons([newLesson, ...lessons]);
-        setActiveSession(null);
+        try {
+            const savedLesson = await api.scheduleLesson(newLesson);
+            setLessons([savedLesson, ...lessons]);
+            setActiveSession(null);
+        } catch (err) {
+            alert("Error saving session: " + err.message);
+        }
     };
 
     const addSubjectToStudent = async (studentId, subjectName, rate, startDate, endDate) => {
@@ -174,16 +193,29 @@ const App = () => {
         }));
     };
 
-    const toggleHomework = (lessonId) => {
-        setLessons(lessons.map(l => 
-            l.id === lessonId ? { ...l, status: l.status === 'Completed' ? 'Pending' : 'Completed' } : l
-        ));
+    const toggleHomework = async (lessonId) => {
+        const lesson = lessons.find(l => l.id === lessonId);
+        if (!lesson) return;
+        const newStatus = lesson.status === 'Completed' ? 'Pending' : 'Completed';
+        try {
+            await api.updateLessonStudentWork(lessonId, { status: newStatus });
+            setLessons(lessons.map(l => 
+                l.id === lessonId ? { ...l, status: newStatus } : l
+            ));
+        } catch (err) {
+            alert("Error updating status: " + err.message);
+        }
     };
 
-    const updateHomework = (lessonId, newHomework) => {
-        setLessons(lessons.map(l => 
-            l.id === lessonId ? { ...l, homework: newHomework } : l
-        ));
+    const updateHomework = async (lessonId, newHomework) => {
+        try {
+            await api.updateLessonStudentWork(lessonId, { homework: newHomework });
+            setLessons(lessons.map(l => 
+                l.id === lessonId ? { ...l, homework: newHomework } : l
+            ));
+        } catch (err) {
+            alert("Error updating homework: " + err.message);
+        }
     };
 
     const confirmSignOut = async () => {
@@ -641,7 +673,11 @@ const App = () => {
                                     ].map(cur => (
                                         <button 
                                             key={cur.code}
-                                            onClick={() => setSettings({ ...settings, currency: cur.code })}
+                                            onClick={async () => {
+                                                const newSettings = { ...settings, currency: cur.code };
+                                                setSettings(newSettings);
+                                                await api.saveSettings(newSettings);
+                                            }}
                                             className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${settings.currency === cur.code ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-slate-100 hover:border-slate-200 text-slate-500'}`}
                                         >
                                             <span className="text-2xl font-bold">{cur.symbol}</span>
