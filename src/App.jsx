@@ -47,7 +47,6 @@ const App = () => {
 
     // --- Data Loading & Auth ---
     useEffect(() => {
-        let activeUserId = null;
         let messageSubscription = null;
 
         const loadData = async (userId, role, profileStudentId) => {
@@ -61,7 +60,6 @@ const App = () => {
                     api.fetchMessages(userId)
                 ]);
                 
-                // If student role but no student record linked, keep arrays empty
                 if (role === 'student' && !profileStudentId) {
                     setStudents([]);
                     setLessons([]);
@@ -74,14 +72,13 @@ const App = () => {
                 setSettings(sSettings);
                 setMessages(sMessages || []);
 
-                // Setup realtime listener for messages
                 if (messageSubscription) supabase.removeChannel(messageSubscription);
                 messageSubscription = supabase.channel('messages-changes')
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, async (payload) => {
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, async () => {
                         const newMsgs = await api.fetchMessages(userId);
                         setMessages(newMsgs || []);
                     })
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, async (payload) => {
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, async () => {
                         const newMsgs = await api.fetchMessages(userId);
                         setMessages(newMsgs || []);
                     })
@@ -94,42 +91,51 @@ const App = () => {
             }
         };
 
-        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (session) {
-                activeUserId = session.user.id;
-                setIsLoggedIn(true);
-                try {
-                    const { data: profile, error: profileErr } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                    if (profileErr && profileErr.code !== 'PGRST116') throw profileErr;
+        const initAuth = async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                    setIsLoggedIn(true);
+                    const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
                     const role = profile?.role || 'student';
                     setUserRole(role);
                     await loadData(session.user.id, role, profile?.student_id);
-                } catch (err) {
-                    console.error("Error fetching profile:", err);
+                } else {
+                    setIsLoggedIn(false);
                     setIsLoading(false);
                 }
-            } else {
-                activeUserId = null;
+            } catch (err) {
+                console.error("Auth init error:", err);
+                setIsLoading(false);
+            } finally {
+                setIsAuthLoading(false);
+            }
+        };
+
+        initAuth();
+
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+                setIsLoggedIn(true);
+                setIsLoading(true);
+                const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+                const role = profile?.role || 'student';
+                setUserRole(role);
+                await loadData(session.user.id, role, profile?.student_id);
+            } else if (event === 'SIGNED_OUT') {
                 setIsLoggedIn(false);
                 setUserRole(null);
-                setIsLoading(false);
+                setStudents([]);
+                setLessons([]);
+                setInvoices([]);
                 if (messageSubscription) supabase.removeChannel(messageSubscription);
             }
-            setIsAuthLoading(false);
         });
 
-        // Safety fallback: if nothing happens in 10s, stop loading
         const safetyTimeout = setTimeout(() => {
             setIsLoading(false);
             setIsAuthLoading(false);
         }, 10000);
-
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            if (!session) {
-                setIsAuthLoading(false);
-                setIsLoading(false);
-            }
-        });
 
         return () => {
             clearTimeout(safetyTimeout);
@@ -267,10 +273,12 @@ const App = () => {
         return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-bold animate-pulse">Loading Application...</div>;
     }
 
-    // --- Main Screens ---
     if (isAuthLoading) {
         return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-bold animate-pulse">Initializing Security...</div>;
     }
+
+    // DEBUG: If everything is white, we might be here but failing to render the login/app.
+    // Let's ensure something always shows if we reach this point.
 
     if (!isLoggedIn) {
         const handleAuth = async (e) => {
@@ -305,7 +313,7 @@ const App = () => {
             <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
                 <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
                     <div className="bg-indigo-600 pt-10 pb-6 text-center text-white">
-                        <Icons.Book size={56} className="mx-auto mb-4" />
+                        <div className="text-6xl mb-4">📚</div>
                         <h1 className="text-3xl font-bold tracking-tight text-white">Lesson Pro</h1>
                     </div>
                     
@@ -380,37 +388,37 @@ const App = () => {
             {/* Sidebar */}
             <nav className="w-64 bg-slate-900 h-screen flex flex-col text-slate-300 p-6 fixed left-0 top-0 z-20 shadow-2xl">
                 <div className="flex items-center gap-3 mb-10 text-white">
-                    <div className="bg-indigo-600 p-2 rounded-lg shadow-lg"><Icons.Book size={24} /></div>
+                    <div className="bg-indigo-600 p-2 rounded-lg shadow-lg"><span>📚</span></div>
                     <h2 className="text-xl font-bold tracking-tight">Lesson Pro</h2>
                 </div>
                 
                 <div className="space-y-1 flex-1">
                     <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <Icons.Dashboard size={20}/> Dashboard
+                        <span>📊</span> Dashboard
                     </button>
                     {userRole === 'tutor' && (
                         <button onClick={() => setActiveTab('students')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'students' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                            <Icons.Users size={20}/> My Students
+                            <span>👥</span> My Students
                         </button>
                     )}
                     <button onClick={() => setActiveTab('billing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'billing' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <Icons.CreditCard size={20}/> Invoices
+                        <span>💳</span> Invoices
                     </button>
                     <button onClick={() => setActiveTab('calendar')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <Icons.Calendar size={20}/> Calendar
+                        <span>📅</span> Calendar
                     </button>
                     <button onClick={() => setActiveTab('messages')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'messages' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <Icons.MessageSquare size={20}/> Messages
+                        <span>💬</span> Messages
                     </button>
                     <button onClick={() => setActiveTab('ai')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <Icons.Bot size={20}/> AI Support
+                        <span>🤖</span> AI Support
                     </button>
                 </div>
 
                 <div className="mt-auto pt-6 border-t border-slate-800 space-y-4">
                     {userRole === 'tutor' && (
                         <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                            <Icons.Settings size={20}/> Settings
+                            <span>⚙️</span> Settings
                         </button>
                     )}
                     <button onClick={() => setIsSignOutModalOpen(true)} className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all active:scale-95 group">
