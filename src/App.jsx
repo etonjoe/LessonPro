@@ -224,22 +224,21 @@ const App = () => {
         }
     };
 
-    const confirmSignOut = async () => {
-        try {
-            await api.signOut();
-        } catch (err) {
-            console.error("Sign out error:", err);
-        } finally {
-            setIsLoggedIn(false);
-            setUserRole(null);
-            setActiveTab('dashboard');
-            setIsSignOutModalOpen(false);
-            // Clear all data
-            setStudents([]);
-            setLessons([]);
-            setInvoices([]);
-            setMessages([]);
-        }
+    const confirmSignOut = () => {
+        // Immediate local cleanup for responsive UI
+        setIsLoggedIn(false);
+        setUserRole(null);
+        setActiveTab('dashboard');
+        setIsSignOutModalOpen(false);
+        
+        // Clear data
+        setStudents([]);
+        setLessons([]);
+        setInvoices([]);
+        setMessages([]);
+
+        // Background signout
+        api.signOut().catch(err => console.error("Sign out error:", err));
     };
 
     const formatCurrency = (val) => {
@@ -881,7 +880,7 @@ const App = () => {
                                     <h3 className="font-bold text-slate-800">Conversations</h3>
                                 </div>
                                 <div className="divide-y divide-slate-100">
-                                    {(userRole === 'tutor' ? students : [{id: 'tutor', name: 'Tutor'}]).map(contact => (
+                                    {(userRole === 'tutor' ? (students || []) : [{id: 'tutor', name: 'Tutor'}]).map(contact => (
                                         <div key={contact.id} 
                                              onClick={() => setActiveChatContactId(contact.id)}
                                              className={`p-4 cursor-pointer hover:bg-slate-100 transition-colors flex items-center gap-3 ${activeChatContactId === contact.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''}`}>
