@@ -93,7 +93,12 @@ export const saveSettings = async (settings) => {
 
 export const fetchStudents = async (studentId = null) => {
     let query = supabase.from('students').select(`*, subjects(*)`);
-    if (studentId) query = query.eq('id', studentId);
+    if (studentId) {
+        query = query.eq('id', studentId);
+    } else {
+        // If no studentId and not a tutor (handled by RLS or caller), this might return empty or all.
+        // For security, if we don't have a studentId, we assume we want all (tutor mode).
+    }
     const { data } = await query;
     if (!data) return [];
     return data.map(s => ({
@@ -132,7 +137,9 @@ export const saveSubject = async (subject) => {
 
 export const fetchLessons = async (studentId = null) => {
     let query = supabase.from('lessons').select('*');
-    if (studentId) query = query.eq('studentId', studentId);
+    if (studentId) {
+        query = query.eq('studentId', studentId);
+    }
     const { data } = await query;
     return data || [];
 };
@@ -144,7 +151,9 @@ export const saveLessons = async (lessons) => {
 
 export const fetchInvoices = async (studentId = null) => {
     let query = supabase.from('invoices').select('*');
-    if (studentId) query = query.eq('studentId', studentId);
+    if (studentId) {
+        query = query.eq('studentId', studentId);
+    }
     const { data } = await query;
     return data || [];
 };

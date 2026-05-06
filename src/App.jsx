@@ -50,44 +50,38 @@ const App = () => {
         let messageSubscription = null;
 
         const loadData = async (userId, role, profileStudentId) => {
+            // Progressive loading: set loading false as soon as we have enough to show the shell
+            setIsLoading(false);
+            
             try {
                 const studentIdToFetch = role === 'student' ? profileStudentId : null;
-                const [sSettings, sStudents, sLessons, sInvoices, sMessages] = await Promise.all([
-                    api.fetchSettings(),
-                    api.fetchStudents(studentIdToFetch),
-                    api.fetchLessons(studentIdToFetch),
-                    api.fetchInvoices(studentIdToFetch),
-                    api.fetchMessages(userId)
-                ]);
                 
-                if (role === 'student' && !profileStudentId) {
-                    setStudents([]);
-                    setLessons([]);
-                    setInvoices([]);
-                } else {
-                    setStudents(sStudents);
-                    setLessons(sLessons);
-                    setInvoices(sInvoices);
-                }
-                setSettings(sSettings);
-                setMessages(sMessages || []);
+                // Fetch settings first as it's small and affects UI (currency)
+                const settingsData = await api.fetchSettings();
+                setSettings(settingsData);
 
-                if (messageSubscription) supabase.removeChannel(messageSubscription);
-                messageSubscription = supabase.channel('messages-changes')
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, async () => {
-                        const newMsgs = await api.fetchMessages(userId);
-                        setMessages(newMsgs || []);
-                    })
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, async () => {
-                        const newMsgs = await api.fetchMessages(userId);
-                        setMessages(newMsgs || []);
-                    })
-                    .subscribe();
+                // Load other data in background, updating state as they arrive
+                api.fetchStudents(studentIdToFetch).then(setStudents);
+                api.fetchLessons(studentIdToFetch).then(setLessons);
+                api.fetchInvoices(studentIdToFetch).then(setInvoices);
+                api.fetchMessages(userId).then(msgs => {
+                    setMessages(msgs || []);
+                    // Initialize realtime after first fetch
+                    if (messageSubscription) supabase.removeChannel(messageSubscription);
+                    messageSubscription = supabase.channel('messages-changes')
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${userId}` }, async () => {
+                            const newMsgs = await api.fetchMessages(userId);
+                            setMessages(newMsgs || []);
+                        })
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, async () => {
+                            const newMsgs = await api.fetchMessages(userId);
+                            setMessages(newMsgs || []);
+                        })
+                        .subscribe();
+                });
 
             } catch (error) {
-                console.error("Failed to load application data:", error);
-            } finally {
-                setIsLoading(false);
+                console.error("Failed to load background data:", error);
             }
         };
 
@@ -135,7 +129,7 @@ const App = () => {
         const safetyTimeout = setTimeout(() => {
             setIsLoading(false);
             setIsAuthLoading(false);
-        }, 10000);
+        }, 5000);
 
         return () => {
             clearTimeout(safetyTimeout);
@@ -153,6 +147,12 @@ const App = () => {
     // Persistence is handled explicitly in handlers now to avoid sync loops
 
     // --- Handlers ---
+    useEffect(() => {
+        if (activeTab === 'messages' && userRole === 'student' && !activeChatContactId) {
+            setActiveChatContactId('tutor');
+        }
+    }, [activeTab, userRole, activeChatContactId]);
+
     const handleClockIn = (studentId, subjectId) => {
         const subject = students.find(s => s.id === studentId)?.subjects.find(sub => sub.id === subjectId);
         setActiveSession({
@@ -256,12 +256,13 @@ const App = () => {
         if (!aiQuery.trim()) return;
         setIsAiLoading(true);
         // Note: Set your Gemini API key in the environment variables (e.g., VITE_GEMINI_API_KEY)
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || ""; 
+        // Using gemini-1.5-flash for better performance and compatibility
+        const modelName = "gemini-1.5-flash";
         try {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: `You are an expert tutor assistant for Lesson Pro. Answer: ${aiQuery}` }] }] })
+                body: JSON.stringify({ contents: [{ parts: [{ text: `You are an expert tutor assistant for Lesson Pro. User Role: ${userRole}. Question: ${aiQuery}` }] }] })
             });
             const data = await res.json();
             setAiResponse(data.candidates?.[0]?.content?.parts?.[0]?.text || "Unable to reach AI.");
@@ -441,7 +442,12 @@ const App = () => {
                             </button>
                         )}
                         <div className="h-6 w-px bg-slate-200 mx-2"></div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{activeTab === 'dashboard' ? 'Overview' : activeTab}</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                            {activeTab === 'dashboard' ? 'Overview' : 
+                             activeTab === 'billing' ? 'Invoices' : 
+                             activeTab === 'ai' ? 'AI Assistant' : 
+                             activeTab}
+                        </p>
                     </div>
                     <button onClick={() => setIsSignOutModalOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-red-500 transition-colors">
                         <Icons.LogOut size={18} /> Exit Application
@@ -451,6 +457,11 @@ const App = () => {
                 {/* TUTOR DASHBOARD */}
                 {userRole === 'tutor' && activeTab === 'dashboard' && (
                     <div className="space-y-8 animate-fade-in">
+                        {students.length === 0 && (
+                            <div className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl w-fit animate-pulse">
+                                <div className="w-2 h-2 bg-indigo-600 rounded-full" /> Initialising tutor workspace...
+                            </div>
+                        )}
                         <header className="flex justify-between items-center">
                             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Tutor Overview</h1>
                             <div className="flex gap-4">
@@ -538,6 +549,11 @@ const App = () => {
                 {/* STUDENT DASHBOARD */}
                 {userRole === 'student' && activeTab === 'dashboard' && (
                     <div className="space-y-8 animate-fade-in">
+                        {students.length === 0 && (
+                            <div className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl w-fit animate-pulse">
+                                <div className="w-2 h-2 bg-indigo-600 rounded-full" /> Synchronising your lesson data...
+                            </div>
+                        )}
                         <header className="flex justify-between items-end">
                             <div>
                                 <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Student Dashboard</h1>
@@ -555,7 +571,7 @@ const App = () => {
                         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                             <div className="p-6 border-b border-slate-100 font-bold flex items-center gap-2 text-slate-800">
                                 <Icons.CheckCircle className="text-indigo-600" size={18} />
-                                {activeSubjectId === 'all' ? 'Consolidated Lesson Board' : `${students[0]?.subjects?.find(s => s.id === activeSubjectId)?.name} Board`}
+                                {activeSubjectId === 'all' ? 'Consolidated Lesson Board' : `${students[0]?.subjects?.find(s => s.id === activeSubjectId)?.name || 'Subject'} Board`}
                             </div>
                             <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto custom-scrollbar">
                                 {filteredLessons.length > 0 ? filteredLessons.map(l => (
