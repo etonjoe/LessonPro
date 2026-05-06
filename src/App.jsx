@@ -1016,6 +1016,7 @@ const App = () => {
                     </div>
                 )}
 
+                </div>
             </main>
 
             {/* MODAL: REGISTER STUDENT */}
