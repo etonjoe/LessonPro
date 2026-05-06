@@ -280,7 +280,20 @@ const App = () => {
     };
 
     if (isLoading) {
-        return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-bold animate-pulse">Loading Application...</div>;
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-slate-50 font-['Outfit']">
+                <div className="w-24 h-24 bg-white rounded-[2rem] shadow-2xl flex items-center justify-center animate-bounce mb-10 border border-slate-100">
+                    <Icons.BookOpen className="text-indigo-600" size={48} />
+                </div>
+                <div className="flex flex-col items-center gap-4">
+                    <div className="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 rounded-2xl shadow-sm">
+                        <div className="w-3 h-3 bg-indigo-600 rounded-full animate-ping" />
+                        <span className="text-sm font-bold text-slate-600 tracking-widest uppercase">Initialising Workspace</span>
+                    </div>
+                    <p className="text-slate-400 text-xs font-medium animate-pulse">Synchronising your lessons and messages...</p>
+                </div>
+            </div>
+        );
     }
 
     if (isAuthLoading) {
@@ -883,23 +896,38 @@ const App = () => {
                             <h2 className="text-3xl font-bold text-slate-900 tracking-tight text-slate-800">Lesson Pro AI</h2>
                             <p className="text-slate-500 mt-2 text-sm">Personalised pedagogical assistance for students and tutors.</p>
                         </div>
-                        <div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-xl space-y-6">
-                            <textarea 
-                                value={aiQuery}
-                                onChange={(e) => setAiQuery(e.target.value)}
-                                placeholder={userRole === 'tutor' ? "How can I explain specific heat capacity effectively?" : "Explain the concept of differentiation in Calculus..."}
-                                className="w-full h-44 p-6 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-lg leading-relaxed shadow-inner"
-                            />
+                        <div className="bg-white p-8 md:p-12 rounded-[2.5rem] border border-slate-200 shadow-2xl space-y-8">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Your Query</label>
+                                <textarea 
+                                    value={aiQuery}
+                                    onChange={(e) => setAiQuery(e.target.value)}
+                                    placeholder={userRole === 'tutor' ? "How can I explain specific heat capacity effectively?" : "Explain the concept of differentiation in Calculus..."}
+                                    className="w-full h-44 p-6 bg-slate-50 border border-slate-100 rounded-3xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-lg leading-relaxed shadow-inner"
+                                />
+                            </div>
                             <button 
                                 onClick={askAI}
                                 disabled={isAiLoading || !aiQuery}
-                                className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3 text-lg"
+                                className="w-full bg-indigo-600 text-white py-6 rounded-3xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-3 text-lg group"
                             >
-                                {isAiLoading ? 'Synthesising Guidance...' : <><Icons.Send size={20}/> Send to AI Assistant</>}
+                                {isAiLoading ? (
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 bg-white rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                        <div className="w-2 h-2 bg-white rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                        <div className="w-2 h-2 bg-white rounded-full animate-bounce" />
+                                        <span>Synthesising Guidance...</span>
+                                    </div>
+                                ) : (
+                                    <><Icons.Send size={22} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" /> Send to AI Assistant</>
+                                )}
                             </button>
                             {aiResponse && (
-                                <div className="mt-8 p-8 bg-indigo-50/50 border-l-4 border-indigo-600 rounded-r-2xl animate-fade-in text-slate-700 leading-relaxed whitespace-pre-wrap text-sm md:text-base">
-                                    {aiResponse}
+                                <div className="mt-10 p-10 bg-indigo-50/50 border border-indigo-100 rounded-[2rem] animate-fade-in relative group">
+                                    <div className="absolute -top-4 left-8 bg-indigo-600 text-white px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest">AI Response</div>
+                                    <div className="text-slate-700 leading-relaxed whitespace-pre-wrap text-base prose prose-indigo max-w-none">
+                                        {aiResponse}
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -933,12 +961,15 @@ const App = () => {
                                 {activeChatContactId ? (
                                     <>
                                         <div className="p-6 border-b border-slate-100 flex items-center gap-4 bg-white/80 backdrop-blur-md z-10 sticky top-0">
-                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">
+                                            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg shadow-sm border border-indigo-100">
                                                 {(userRole === 'tutor' ? (students.find(s=>s.id === activeChatContactId)?.name || 'C') : 'Tutor')[0]}
                                             </div>
                                             <div>
-                                                <h3 className="font-bold text-slate-800">{userRole === 'tutor' ? (students.find(s=>s.id === activeChatContactId)?.name || 'Contact') : 'Tutor'}</h3>
-                                                <p className="text-xs text-slate-400">Online</p>
+                                                <h3 className="font-bold text-slate-800 text-lg">{userRole === 'tutor' ? (students.find(s=>s.id === activeChatContactId)?.name || 'Student') : 'Lead Tutor'}</h3>
+                                                <div className="flex items-center gap-1.5">
+                                                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                                                    <p className="text-xs font-bold text-green-600 uppercase tracking-widest">Active Now</p>
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-4 flex flex-col-reverse">
