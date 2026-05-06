@@ -225,11 +225,21 @@ const App = () => {
     };
 
     const confirmSignOut = async () => {
-        await api.signOut();
-        setIsLoggedIn(false);
-        setUserRole(null);
-        setActiveTab('dashboard');
-        setIsSignOutModalOpen(false);
+        try {
+            await api.signOut();
+        } catch (err) {
+            console.error("Sign out error:", err);
+        } finally {
+            setIsLoggedIn(false);
+            setUserRole(null);
+            setActiveTab('dashboard');
+            setIsSignOutModalOpen(false);
+            // Clear all data
+            setStudents([]);
+            setLessons([]);
+            setInvoices([]);
+            setMessages([]);
+        }
     };
 
     const formatCurrency = (val) => {
@@ -453,6 +463,16 @@ const App = () => {
                         <Icons.LogOut size={18} /> Exit Application
                     </button>
                 </div>
+                
+                {/* Fallback for missing/restricted panes */}
+                {!['dashboard', 'students', 'billing', 'calendar', 'messages', 'ai', 'settings'].includes(activeTab) || 
+                 ((activeTab === 'students' || activeTab === 'settings') && userRole !== 'tutor') ? (
+                    <div className="flex flex-col items-center justify-center h-[60vh] text-slate-400 animate-fade-in">
+                        <div className="text-4xl mb-4">🔍</div>
+                        <p className="font-bold">Module under development or restricted access.</p>
+                        <button onClick={() => setActiveTab('dashboard')} className="mt-4 text-indigo-600 font-bold hover:underline">Return to Dashboard</button>
+                    </div>
+                ) : null}
                 
                 {/* TUTOR DASHBOARD */}
                 {userRole === 'tutor' && activeTab === 'dashboard' && (
@@ -865,9 +885,9 @@ const App = () => {
                                         <div key={contact.id} 
                                              onClick={() => setActiveChatContactId(contact.id)}
                                              className={`p-4 cursor-pointer hover:bg-slate-100 transition-colors flex items-center gap-3 ${activeChatContactId === contact.id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''}`}>
-                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">{contact.name[0]}</div>
+                                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">{(contact.name || 'T')[0]}</div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-bold text-slate-800 truncate">{contact.name}</p>
+                                                <p className="text-sm font-bold text-slate-800 truncate">{contact.name || 'Unknown'}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -879,10 +899,10 @@ const App = () => {
                                     <>
                                         <div className="p-6 border-b border-slate-100 flex items-center gap-4 bg-white/80 backdrop-blur-md z-10 sticky top-0">
                                             <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm">
-                                                {(userRole === 'tutor' ? students.find(s=>s.id === activeChatContactId)?.name : 'Tutor')?.[0]}
+                                                {(userRole === 'tutor' ? (students.find(s=>s.id === activeChatContactId)?.name || 'C') : 'Tutor')[0]}
                                             </div>
                                             <div>
-                                                <h3 className="font-bold text-slate-800">{userRole === 'tutor' ? students.find(s=>s.id === activeChatContactId)?.name : 'Tutor'}</h3>
+                                                <h3 className="font-bold text-slate-800">{userRole === 'tutor' ? (students.find(s=>s.id === activeChatContactId)?.name || 'Contact') : 'Tutor'}</h3>
                                                 <p className="text-xs text-slate-400">Online</p>
                                             </div>
                                         </div>
