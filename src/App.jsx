@@ -93,7 +93,7 @@ const App = () => {
                     const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
                     const role = profile?.role || 'student';
                     setUserRole(role);
-                    await loadData(session.user.id, role, profile?.student_id);
+                    loadData(session.user.id, role, profile?.student_id);
                 } else {
                     setIsLoggedIn(false);
                     setIsLoading(false);
@@ -109,27 +109,33 @@ const App = () => {
         initAuth();
 
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (event === 'SIGNED_IN' && session) {
-                setIsLoggedIn(true);
-                setIsLoading(true);
-                const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-                const role = profile?.role || 'student';
-                setUserRole(role);
-                await loadData(session.user.id, role, profile?.student_id);
-            } else if (event === 'SIGNED_OUT') {
-                setIsLoggedIn(false);
-                setUserRole(null);
-                setStudents([]);
-                setLessons([]);
-                setInvoices([]);
-                if (messageSubscription) supabase.removeChannel(messageSubscription);
+            try {
+                if (event === 'SIGNED_IN' && session) {
+                    setIsLoggedIn(true);
+                    const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+                    const role = profile?.role || 'student';
+                    setUserRole(role);
+                    loadData(session.user.id, role, profile?.student_id);
+                } else if (event === 'SIGNED_OUT') {
+                    setIsLoggedIn(false);
+                    setUserRole(null);
+                    setStudents([]);
+                    setLessons([]);
+                    setInvoices([]);
+                    setIsLoading(false); // Ensure loading is cleared on sign out
+                    if (messageSubscription) supabase.removeChannel(messageSubscription);
+                }
+            } catch (err) {
+                console.error("Auth listener error:", err);
+                setIsLoading(false);
             }
         });
 
+        // Safety timeout to ensure we never stay stuck on loading
         const safetyTimeout = setTimeout(() => {
             setIsLoading(false);
             setIsAuthLoading(false);
-        }, 5000);
+        }, 3000);
 
         return () => {
             clearTimeout(safetyTimeout);
