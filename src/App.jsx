@@ -394,74 +394,110 @@ const App = () => {
     }
 
     return (
-        <div className="flex min-h-screen bg-slate-50">
+        <div className="flex h-screen bg-slate-50 font-['Outfit'] text-slate-900 overflow-hidden relative">
+            {/* Sidebar Overlay (Mobile) */}
+            {isSidebarOpen && (
+                <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 lg:hidden transition-all duration-300" />
+            )}
+
             {/* Sidebar */}
-            <nav className="w-64 bg-slate-900 h-screen flex flex-col text-slate-300 p-6 fixed left-0 top-0 z-20 shadow-2xl">
-                <div className="flex items-center gap-3 mb-10 text-white">
-                    <div className="bg-indigo-600 p-2 rounded-lg shadow-lg"><span>📚</span></div>
-                    <h2 className="text-xl font-bold tracking-tight">Lesson Pro</h2>
-                </div>
-                
-                <div className="space-y-1 flex-1">
-                    <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <span>📊</span> Dashboard
-                    </button>
-                    {userRole === 'tutor' && (
-                        <button onClick={() => setActiveTab('students')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'students' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                            <span>👥</span> My Students
+            <aside className={`fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 transform transition-transform duration-500 ease-out shadow-2xl lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                <div className="p-8 h-full flex flex-col">
+                    <div className="flex items-center gap-3 mb-12">
+                        <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-200">
+                            <Icons.BookOpen className="text-white" size={24} />
+                        </div>
+                        <h2 className="text-2xl font-bold tracking-tight text-slate-800">Lesson Pro</h2>
+                    </div>
+                    
+                    <nav className="space-y-2 flex-1">
+                        <button onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
+                                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                            <Icons.LayoutDashboard className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'dashboard' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                            <span className="text-sm tracking-tight">Dashboard</span>
                         </button>
-                    )}
-                    <button onClick={() => setActiveTab('billing')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'billing' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <span>💳</span> Invoices
-                    </button>
-                    <button onClick={() => setActiveTab('calendar')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <span>📅</span> Calendar
-                    </button>
-                    <button onClick={() => setActiveTab('messages')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'messages' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <span>💬</span> Messages
-                    </button>
-                    <button onClick={() => setActiveTab('ai')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                        <span>🤖</span> AI Support
-                    </button>
-                </div>
 
-                <div className="mt-auto pt-6 border-t border-slate-800 space-y-4">
-                    {userRole === 'tutor' && (
-                        <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-800'}`}>
-                            <span>⚙️</span> Settings
-                        </button>
-                    )}
-                    <button onClick={() => setIsSignOutModalOpen(true)} className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all active:scale-95 group">
-                        <Icons.LogOut size={18} className="group-hover:rotate-180 transition-transform duration-500" /> Sign Out
-                    </button>
-                </div>
-            </nav>
-
-            {/* Main Content */}
-            <main className="flex-1 ml-64 p-8">
-                {/* Global Section Header */}
-                <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 animate-fade-in">
-                    <div className="flex items-center gap-4">
-                        {activeTab !== 'dashboard' && (
-                            <button onClick={() => setActiveTab('dashboard')} className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 font-bold text-sm transition-colors group">
-                                <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-indigo-50 transition-colors">
-                                    <Icons.ArrowLeft size={18} />
-                                </div>
-                                Overview
+                        {userRole === 'tutor' && (
+                            <button onClick={() => { setActiveTab('students'); setIsSidebarOpen(false); }} 
+                                    className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'students' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                                <Icons.Users className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'students' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                                <span className="text-sm tracking-tight">Students</span>
                             </button>
                         )}
-                        <div className="h-6 w-px bg-slate-200 mx-2"></div>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                            {activeTab === 'dashboard' ? 'Overview' : 
-                             activeTab === 'billing' ? 'Invoices' : 
-                             activeTab === 'ai' ? 'AI Assistant' : 
-                             activeTab}
-                        </p>
+
+                        <button onClick={() => { setActiveTab('billing'); setIsSidebarOpen(false); }} 
+                                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'billing' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                            <Icons.CreditCard className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'billing' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                            <span className="text-sm tracking-tight">Invoices</span>
+                        </button>
+
+                        <button onClick={() => { setActiveTab('calendar'); setIsSidebarOpen(false); }} 
+                                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'calendar' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                            <Icons.Calendar className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'calendar' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                            <span className="text-sm tracking-tight">Calendar</span>
+                        </button>
+
+                        <button onClick={() => { setActiveTab('messages'); setIsSidebarOpen(false); }} 
+                                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'messages' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                            <Icons.MessageSquare className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'messages' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                            <span className="text-sm tracking-tight">Messages</span>
+                            {messages.length > 0 && <div className="ml-auto w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
+                        </button>
+
+                        <button onClick={() => { setActiveTab('ai'); setIsSidebarOpen(false); }} 
+                                className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                            <Icons.Sparkles className={`group-hover:rotate-6 transition-transform pointer-events-none ${activeTab === 'ai' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                            <span className="text-sm tracking-tight">AI Support</span>
+                        </button>
+                    </nav>
+
+                    <div className="mt-auto pt-8 border-t border-slate-100 space-y-4">
+                        {userRole === 'tutor' && (
+                            <button onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
+                                    className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all duration-300 group ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-100 scale-[1.02]' : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600 font-bold'}`}>
+                                <Icons.Settings className={`group-hover:rotate-90 transition-transform pointer-events-none ${activeTab === 'settings' ? 'text-white' : 'text-indigo-500'}`} size={20} />
+                                <span className="text-sm tracking-tight">Settings</span>
+                            </button>
+                        )}
+                        <button onClick={() => setIsSignOutModalOpen(true)} className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl text-sm font-bold bg-red-50 text-red-600 hover:bg-red-600 hover:text-white transition-all active:scale-95 group">
+                            <Icons.LogOut size={18} className="group-hover:translate-x-1 transition-transform" /> Sign Out
+                        </button>
                     </div>
-                    <button onClick={() => setIsSignOutModalOpen(true)} className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-red-500 transition-colors">
-                        <Icons.LogOut size={18} /> Exit Application
-                    </button>
                 </div>
+            </aside>
+
+            {/* Main Content Area */}
+            <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+                {/* Global Top Navigation / Header */}
+                <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 z-20 shrink-0">
+                    <div className="flex items-center gap-4">
+                        <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 text-slate-500 hover:bg-slate-50 rounded-xl transition-all">
+                            <Icons.Menu size={20} />
+                        </button>
+                        <div className="flex items-center gap-3">
+                            {activeTab !== 'dashboard' && (
+                                <button onClick={() => setActiveTab('dashboard')} className="p-2 bg-slate-50 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition-all">
+                                    <Icons.ChevronLeft size={18} />
+                                </button>
+                            )}
+                            <h1 className="text-lg font-bold text-slate-800 capitalize tracking-tight">{activeTab === 'ai' ? 'AI Assistant' : activeTab}</h1>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setActiveTab('messages')} className={`p-2.5 rounded-xl transition-all relative ${activeTab === 'messages' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}>
+                            <Icons.MessageSquare size={20} />
+                            {messages.length > 0 && <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full" />}
+                        </button>
+                        <div className="h-8 w-px bg-slate-200 mx-2" />
+                        <div className="flex items-center gap-3 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full">
+                            <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold text-white uppercase">{(userRole || 'S')[0]}</div>
+                            <span className="text-xs font-bold text-indigo-700 uppercase tracking-widest">{userRole}</span>
+                        </div>
+                    </div>
+                </header>
+
+                {/* Scrolled Content Container */}
+                <div className="flex-1 overflow-y-auto p-4 lg:p-10 custom-scrollbar">
                 
                 {/* Fallback for missing/restricted panes */}
                 {!['dashboard', 'students', 'billing', 'calendar', 'messages', 'ai', 'settings'].includes(activeTab) || 
@@ -872,7 +908,7 @@ const App = () => {
 
                 {/* MESSAGES */}
                 {activeTab === 'messages' && (
-                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[700px] max-h-screen animate-fade-in">
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)] lg:h-[750px] animate-fade-in">
                         <div className="flex h-full">
                             {/* Contact List */}
                             <div className="w-1/3 border-r border-slate-100 bg-slate-50 overflow-y-auto custom-scrollbar">
